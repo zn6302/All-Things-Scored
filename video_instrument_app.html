@@ -631,7 +631,7 @@ async function initAudio() {
   document.getElementById('audio-status').textContent = 'audio: loading…';
   vol = new Tone.Volume(-8).toDestination();
   // Lush reverb — long tail for ambience
-  reverb = new Tone.Reverb({ decay: 5.0, wet: 0.55 }).connect(vol);
+  reverb = new Tone.Reverb({ decay: 2.0, wet: 0.55 }).connect(vol);
   // Gentle slapback-style delay for space
   delay = new Tone.FeedbackDelay({ delayTime: '3/16', feedback: 0.28, wet: 0.3 }).connect(reverb);
   // Subtle chorus to widen & warm the tone
@@ -645,7 +645,7 @@ async function initAudio() {
   }).connect(chorus);
   analyser = new Tone.Analyser('waveform', 256);
   vol.connect(analyser);
-  await reverb.generate();  // must await — decay:5.0 takes ~3s to generate
+  await reverb.generate();  // must await — generate IR before playback
   document.getElementById('audio-dot').style.background = '#00e5a0';
   document.getElementById('audio-status').textContent = 'audio: ready';
 }
@@ -946,6 +946,17 @@ function drawViz() {
 }
 drawViz();
 resizeOverlay();
+
+// ── Pre-warm audio on first user interaction ──────────────────
+// AudioContext requires a user gesture. The earliest safe moment is
+// any click/touch, so we kick off initAudio() immediately — long before
+// the Play button is pressed.
+async function prewarmAudio() {
+  await Tone.start();
+  initAudio(); // not awaited — runs in background while user sets up
+}
+document.addEventListener('click',      prewarmAudio, { once: true });
+document.addEventListener('touchstart', prewarmAudio, { once: true });
 
 // ── Tutorial ──────────────────────────────────────────────────
 function closeTutorial() {
