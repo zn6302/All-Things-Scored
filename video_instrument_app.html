@@ -1,0 +1,961 @@
+
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Space+Mono:wght@400;700&display=swap');
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:       #100708;
+    --panel:    #180B0E;
+    --border:   rgba(237,216,180,0.08);
+    --accent:   #00e5a0;          /* trigger line — stays green */
+    --accent2:  #B8622F;          /* amber — replaces purple */
+    --accent3:  #8B3A1F;          /* ember rust — replaces red */
+    --text:     #EDD8B4;          /* ivory */
+    --muted:    #6B5040;          /* warm brown-grey */
+    --mono:     'Space Mono', monospace;
+    --serif:    'Cormorant Garamond', Georgia, serif;
+  }
+
+  body { background: var(--bg); color: var(--text); font-family: var(--serif); }
+
+  /* ── Layout ───────────────────────────────────────────────── */
+  #app    { display: grid; grid-template-rows: auto 1fr auto; min-height: 520px; }
+  #main   { display: grid; grid-template-columns: 1fr 260px; }
+
+  /* ── Header ───────────────────────────────────────────────── */
+  #header {
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+    display: flex; align-items: center; gap: 16px;
+  }
+  #header h1 {
+    font-family: var(--serif);
+    font-weight: 300;
+    font-size: 15px;
+    letter-spacing: 0.2em;
+    color: var(--text);
+    text-transform: uppercase;
+  }
+  .dot {
+    width: 5px; height: 5px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 6px var(--accent);
+    animation: pulse 2s infinite;
+    flex-shrink: 0;
+  }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  /* ── Canvas area ──────────────────────────────────────────── */
+  #canvas-area {
+    position: relative;
+    background: #080406;
+    border-right: 1px solid var(--border);
+  }
+
+  /* Upload zone */
+  #upload-zone {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 14px; cursor: pointer;
+    transition: background 0.3s;
+  }
+  #upload-zone:hover  { background: rgba(237,216,180,0.02); }
+  #upload-zone.hidden { display: none; }
+
+  .upload-icon {
+    width: 48px; height: 48px;
+    border: 1px solid rgba(237,216,180,0.2);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .upload-icon svg { width: 20px; height: 20px; stroke: rgba(237,216,180,0.4); fill: none; }
+
+  .upload-label {
+    font-family: var(--mono);
+    font-size: 10px; letter-spacing: 0.14em;
+    color: var(--muted); text-transform: uppercase;
+  }
+
+  /* Video + overlay */
+  #video-container               { position: absolute; inset: 0; display: none; }
+  #video-container.visible       { display: block; }
+  #myVideo                       { width: 100%; height: 100%; object-fit: contain; display: block; }
+  #overlay-canvas                { position: absolute; inset: 0; width: 100%; height: 100%; cursor: ns-resize; }
+  #overlay-canvas.vert-mode      { cursor: ew-resize; }
+  #file-input                    { display: none; }
+
+  /* Note flash */
+  #note-flash {
+    position: absolute; top: 9px; left: 11px;
+    font-family: var(--serif);
+    font-weight: 300; font-style: italic;
+    font-size: 24px;
+    color: var(--accent);
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.1s;
+    text-shadow: 0 0 14px var(--accent);
+  }
+
+  /* ── Sidebar ──────────────────────────────────────────────── */
+  #sidebar {
+    background: var(--panel);
+    display: flex; flex-direction: column;
+    overflow-y: auto;
+  }
+  #sidebar::-webkit-scrollbar       { width: 2px; }
+  #sidebar::-webkit-scrollbar-track { background: var(--panel); }
+  #sidebar::-webkit-scrollbar-thumb { background: var(--accent3); }
+
+  .section       { padding: 16px; border-bottom: 1px solid var(--border); }
+  .section-label {
+    font-family: var(--mono);
+    font-size: 9px; letter-spacing: 0.2em;
+    color: var(--muted); margin-bottom: 14px;
+    text-transform: uppercase;
+  }
+
+  .control-row  { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .control-label {
+    font-family: var(--serif);
+    font-style: italic; font-weight: 300;
+    font-size: 13px; letter-spacing: 0.03em;
+    color: var(--text); opacity: 0.8;
+  }
+
+  .val-badge {
+    font-family: var(--mono); font-size: 10px;
+    color: var(--accent);
+    background: rgba(0,229,160,0.08);
+    padding: 2px 7px;
+  }
+
+  #drag-hint {
+    font-family: var(--mono); font-size: 9px;
+    color: var(--muted); opacity: 0.5;
+    text-align: center; padding: 4px 0 0;
+    letter-spacing: 0.08em;
+  }
+
+  /* ── Range sliders ────────────────────────────────────────── */
+  input[type=range] {
+    width: 100%; height: 2px;
+    -webkit-appearance: none;
+    background: rgba(237,216,180,0.1);
+    outline: none; cursor: pointer;
+    margin: 4px 0 10px;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 11px; height: 11px; border-radius: 50%;
+    background: var(--accent2);
+    box-shadow: 0 0 5px rgba(184,98,47,0.45);
+    cursor: pointer;
+  }
+
+  /* ── Select ───────────────────────────────────────────────── */
+  select {
+    width: 100%;
+    background: rgba(237,216,180,0.03);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 7px 10px;
+    font-family: var(--mono); font-size: 10px;
+    letter-spacing: 0.05em;
+    outline: none; cursor: pointer;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+  select option { background: #180B0E; }
+
+  /* ── Buttons ──────────────────────────────────────────────── */
+  .btn {
+    width: 100%; padding: 9px;
+    border: 1px solid;
+    border-radius: 0;
+    font-family: var(--mono); font-size: 10px;
+    letter-spacing: 0.14em; text-transform: uppercase;
+    cursor: pointer; transition: all 0.25s;
+  }
+  .btn-primary {
+    background: var(--text); color: #100708;
+    border-color: var(--text); font-weight: 700;
+  }
+  .btn-primary:hover   { background: #fff; border-color: #fff; }
+  .btn-secondary       { background: transparent; color: var(--muted); border-color: var(--border); }
+  .btn-secondary:hover { border-color: rgba(237,216,180,0.25); color: var(--text); }
+  .btn-danger          { background: transparent; color: rgba(139,58,31,0.75); border-color: rgba(139,58,31,0.28); }
+  .btn-danger:hover    { background: rgba(139,58,31,0.1); color: var(--accent2); }
+
+  /* ── Mode buttons ─────────────────────────────────────────── */
+  .line-mode-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 12px; }
+  .mode-btn {
+    padding: 8px; border-radius: 0;
+    border: 1px solid var(--border);
+    background: transparent; color: var(--muted);
+    font-family: var(--mono); font-size: 10px;
+    letter-spacing: 0.08em;
+    cursor: pointer; transition: all 0.2s;
+  }
+  .mode-btn.active {
+    border-color: var(--accent2);
+    color: var(--accent2);
+    background: rgba(184,98,47,0.1);
+  }
+
+  /* ── Visualizer ───────────────────────────────────────────── */
+  #visualizer {
+    height: 56px;
+    background: #080406;
+    border-top: 1px solid var(--border);
+    position: relative; overflow: hidden;
+  }
+  #vis-canvas { width: 100%; height: 100%; display: block; }
+
+  /* ── Status bar ───────────────────────────────────────────── */
+  #status-bar {
+    padding: 7px 20px;
+    display: flex; align-items: center; gap: 16px;
+    font-family: var(--mono); font-size: 9px;
+    color: var(--muted); letter-spacing: 0.1em;
+    border-top: 1px solid var(--border);
+  }
+  .status-item  { display: flex; align-items: center; gap: 6px; }
+  .status-dot   { width: 5px; height: 5px; border-radius: 50%; }
+  .status-dot.green  { background: var(--accent); }
+  .status-dot.red    { background: var(--accent3); }
+  .status-dot.yellow { background: var(--accent2); }
+
+  /* ── Toggle switch ────────────────────────────────────────── */
+  .toggle       { position: relative; width: 34px; height: 18px; }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .toggle-slider {
+    position: absolute; inset: 0;
+    background: rgba(237,216,180,0.08);
+    border-radius: 18px; cursor: pointer; transition: 0.2s;
+  }
+  .toggle-slider:before {
+    content: ''; position: absolute;
+    width: 14px; height: 14px;
+    left: 2px; top: 2px;
+    background: var(--muted); border-radius: 50%; transition: 0.2s;
+  }
+  input:checked + .toggle-slider              { background: rgba(0,229,160,0.22); }
+  input:checked + .toggle-slider:before       { transform: translateX(16px); background: var(--accent); }
+
+  /* ── Tutorial Dialog ──────────────────────────────────────── */
+  #tutorial-overlay {
+    position: fixed; inset: 0; z-index: 999;
+    background: rgba(8,4,6,0.88);
+    display: flex; align-items: center; justify-content: center;
+    backdrop-filter: blur(4px);
+  }
+  #tutorial-overlay.hidden { display: none; }
+
+  #tutorial-dialog {
+    background: var(--panel);
+    border: 1px solid rgba(237,216,180,0.12);
+    box-shadow: 0 0 60px rgba(122,46,21,0.25), inset 0 0 40px rgba(0,0,0,0.4);
+    max-width: 580px; width: 90%;
+    max-height: 88vh; overflow-y: auto;
+  }
+  #tutorial-dialog::-webkit-scrollbar { width: 2px; }
+  #tutorial-dialog::-webkit-scrollbar-thumb { background: var(--accent3); }
+
+  .tut-header {
+    padding: 24px 28px 18px;
+    border-bottom: 1px solid rgba(237,216,180,0.07);
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+  }
+  .tut-eyebrow {
+    font-family: var(--mono); font-size: 9px;
+    letter-spacing: 0.28em; color: var(--accent);
+    text-transform: uppercase; margin-bottom: 8px;
+  }
+  .tut-title {
+    font-family: var(--serif); font-weight: 300;
+    font-size: 26px; letter-spacing: 0.06em;
+    color: var(--text); line-height: 1.15;
+  }
+  .tut-title em { font-style: italic; color: var(--cream); }
+  .tut-close {
+    background: transparent; border: 1px solid rgba(237,216,180,0.15);
+    color: var(--muted); font-family: var(--mono); font-size: 10px;
+    letter-spacing: 0.1em; padding: 5px 10px; cursor: pointer;
+    flex-shrink: 0; transition: all 0.2s;
+  }
+  .tut-close:hover { border-color: rgba(237,216,180,0.35); color: var(--text); }
+
+  .tut-body { padding: 22px 28px 8px; }
+
+  .tut-section { margin-bottom: 24px; }
+  .tut-section-label {
+    font-family: var(--mono); font-size: 9px;
+    letter-spacing: 0.22em; color: var(--muted);
+    text-transform: uppercase; margin-bottom: 12px;
+  }
+
+  .tut-card {
+    border: 1px solid rgba(237,216,180,0.07);
+    padding: 14px 16px; margin-bottom: 8px;
+    display: flex; gap: 14px; align-items: flex-start;
+  }
+  .tut-card.good  { border-left: 2px solid var(--accent); }
+  .tut-card.bad   { border-left: 2px solid var(--accent3); }
+
+  .tut-icon {
+    font-family: var(--mono); font-size: 14px;
+    flex-shrink: 0; margin-top: 1px;
+    width: 20px; text-align: center;
+  }
+  .tut-icon.good { color: var(--accent); }
+  .tut-icon.bad  { color: var(--accent3); }
+
+  .tut-card-title {
+    font-family: var(--serif); font-weight: 300;
+    font-size: 15px; color: var(--text);
+    margin-bottom: 4px;
+  }
+  .tut-card-desc {
+    font-family: var(--serif); font-style: italic; font-weight: 300;
+    font-size: 13px; color: var(--cream); opacity: 0.7; line-height: 1.6;
+  }
+
+  .tut-steps { counter-reset: step; }
+  .tut-step {
+    display: flex; gap: 14px; align-items: flex-start;
+    margin-bottom: 14px;
+  }
+  .tut-step-num {
+    font-family: var(--mono); font-size: 11px;
+    color: var(--accent2); flex-shrink: 0;
+    width: 22px; padding-top: 1px;
+  }
+  .tut-step-text {
+    font-family: var(--serif); font-weight: 300;
+    font-size: 14px; line-height: 1.65; color: var(--cream);
+  }
+  .tut-step-text strong {
+    font-weight: 400; color: var(--text); font-style: normal;
+  }
+
+  .tut-tip {
+    background: rgba(0,229,160,0.04);
+    border: 1px solid rgba(0,229,160,0.1);
+    padding: 12px 14px; margin-bottom: 8px;
+    font-family: var(--serif); font-style: italic; font-weight: 300;
+    font-size: 13px; color: var(--cream); line-height: 1.6;
+    display: flex; gap: 10px;
+  }
+  .tut-tip-icon { color: var(--accent); flex-shrink: 0; font-style: normal; }
+
+  .tut-footer {
+    padding: 16px 28px 22px;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    border-top: 1px solid rgba(237,216,180,0.07);
+  }
+  .tut-dont-show {
+    display: flex; align-items: center; gap: 8px;
+    font-family: var(--mono); font-size: 9px;
+    letter-spacing: 0.1em; color: var(--muted); cursor: pointer;
+  }
+  .tut-dont-show input { cursor: pointer; accent-color: var(--accent); }
+  .tut-btn-start {
+    font-family: var(--mono); font-size: 10px;
+    letter-spacing: 0.18em; text-transform: uppercase;
+    background: var(--text); color: #100708; font-weight: 700;
+    border: none; padding: 11px 24px; cursor: pointer;
+    transition: background 0.25s;
+  }
+  .tut-btn-start:hover { background: #fff; }
+</style>
+
+<!-- ── Tutorial Dialog ─────────────────────────────────────── -->
+<div id="tutorial-overlay">
+  <div id="tutorial-dialog">
+
+    <div class="tut-header">
+      <div>
+        <div class="tut-eyebrow">使用說明</div>
+        <div class="tut-title">如何讓偵測<em>更準確？</em></div>
+      </div>
+      <button class="tut-close" onclick="closeTutorial()">✕ 關閉</button>
+    </div>
+
+    <div class="tut-body">
+
+      <div class="tut-section">
+        <div class="tut-section-label">運作原理</div>
+        <div class="tut-step-text" style="margin-bottom:14px">
+          程式會在影片上畫一條<strong>觸發線</strong>，偵測每一格畫面中
+          哪些像素<strong>顏色發生變化</strong>——有物體穿越觸發線時就會發出音符。
+          越明顯的動作，觸發越準確。
+        </div>
+      </div>
+
+      <div class="tut-section">
+        <div class="tut-section-label">✓ 好偵測的影片</div>
+        <div class="tut-card good">
+          <div class="tut-icon good">✦</div>
+          <div>
+            <div class="tut-card-title">對比強烈的主體</div>
+            <div class="tut-card-desc">深色背景搭配淺色物體，或反之。例如：白牆前的手、黑板上的粉筆。</div>
+          </div>
+        </div>
+        <div class="tut-card good">
+          <div class="tut-icon good">✦</div>
+          <div>
+            <div class="tut-card-title">移動清晰、路徑明確</div>
+            <div class="tut-card-desc">物體橫跨畫面移動，且不要移動得太快（不會糊掉）。如球滾過、手揮過。</div>
+          </div>
+        </div>
+        <div class="tut-card good">
+          <div class="tut-icon good">✦</div>
+          <div>
+            <div class="tut-card-title">背景相對靜止</div>
+            <div class="tut-card-desc">背景無風吹動的樹葉、無閃爍燈光。鏡頭固定不晃動最佳。</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tut-section">
+        <div class="tut-section-label">✗ 不易偵測的影片</div>
+        <div class="tut-card bad">
+          <div class="tut-icon bad">—</div>
+          <div>
+            <div class="tut-card-title">整體顏色相近</div>
+            <div class="tut-card-desc">主體與背景顏色太接近，例如穿灰衣站在灰牆前，難以分辨變化。</div>
+          </div>
+        </div>
+        <div class="tut-card bad">
+          <div class="tut-icon bad">—</div>
+          <div>
+            <div class="tut-card-title">背景本身在動</div>
+            <div class="tut-card-desc">鏡頭搖晃、背景有大量動態元素，會造成誤觸發、音符雜亂。</div>
+          </div>
+        </div>
+        <div class="tut-card bad">
+          <div class="tut-icon bad">—</div>
+          <div>
+            <div class="tut-card-title">動作太快或太慢</div>
+            <div class="tut-card-desc">極快速動作可能只出現一幀而遺漏；完全靜止則不會觸發。</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tut-section">
+        <div class="tut-section-label">操作步驟</div>
+        <div class="tut-steps">
+          <div class="tut-step">
+            <div class="tut-step-num">01</div>
+            <div class="tut-step-text">點擊上傳區域或拖曳影片檔案（mp4、webm、mov），影片會自動載入。</div>
+          </div>
+          <div class="tut-step">
+            <div class="tut-step-num">02</div>
+            <div class="tut-step-text">在影片上<strong>拖曳觸發線</strong>到你想偵測的位置，水平或垂直皆可切換。</div>
+          </div>
+          <div class="tut-step">
+            <div class="tut-step-num">03</div>
+            <div class="tut-step-text">按下 <strong>▶ Play + Activate</strong>，系統初始化音效後即開始即時偵測。</div>
+          </div>
+          <div class="tut-step">
+            <div class="tut-step-num">04</div>
+            <div class="tut-step-text">若觸發太頻繁，調高<strong>靈敏度（Sensitivity）</strong>數值；觸發太少則調低。</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tut-tip">
+        <span class="tut-tip-icon">✦</span>
+        第一次按下播放時，音效需約 3 秒初始化（狀態列會顯示「audio: loading…」），請稍候再移動物體。
+      </div>
+
+    </div>
+
+    <div class="tut-footer">
+      <label class="tut-dont-show">
+        <input type="checkbox" id="tut-no-show"> 下次不再顯示
+      </label>
+      <button class="tut-btn-start" onclick="closeTutorial()">開始使用 ──▶</button>
+    </div>
+
+  </div>
+</div>
+
+<div id="app">
+  <div id="header">
+    <div class="dot"></div>
+    <h1>All Things Scored</h1>
+    <span style="font-family:var(--mono);font-size:9px;letter-spacing:0.2em;color:var(--muted);margin-left:auto;text-transform:uppercase">motion &nbsp;·&nbsp; music</span>
+  </div>
+
+  <div id="main">
+    <div id="canvas-area">
+      <div id="upload-zone" onclick="document.getElementById('file-input').click()">
+        <div class="upload-icon">
+          <svg viewBox="0 0 24 24" stroke-width="1.5"><polyline points="16,16 12,12 8,16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39,18.39A5,5,0,0,0,18,9h-1.26A8,8,0,1,0,3,16.3"/></svg>
+        </div>
+        <div class="upload-label">Drop video or click to upload</div>
+        <div style="font-family:var(--mono);font-size:9px;color:var(--muted);opacity:0.4;letter-spacing:0.12em">mp4 &nbsp;·&nbsp; webm &nbsp;·&nbsp; mov</div>
+      </div>
+      <div id="video-container">
+        <video id="myVideo" loop muted playsinline></video>
+        <canvas id="overlay-canvas"></canvas>
+        <div id="note-flash">C4</div>
+      </div>
+      <input type="file" id="file-input" accept="video/*">
+    </div>
+
+    <div id="sidebar">
+      <div class="section">
+        <div class="section-label">Trigger Line</div>
+        <div class="line-mode-btns">
+          <button class="mode-btn active" id="btn-horiz" onclick="setLineMode('horizontal')">— Horizontal</button>
+          <button class="mode-btn" id="btn-vert" onclick="setLineMode('vertical')">| Vertical</button>
+        </div>
+        <div class="control-row">
+          <span class="control-label">Position</span>
+          <span class="val-badge" id="line-pos-val">50%</span>
+        </div>
+        <div id="drag-hint">drag line on video to reposition</div>
+        <div class="control-row" style="margin-top:10px">
+          <span class="control-label">Sensitivity</span>
+          <span class="val-badge" id="sens-val">30</span>
+        </div>
+        <input type="range" id="sensitivity" min="5" max="80" value="30" oninput="document.getElementById('sens-val').textContent=this.value;sensitivity=+this.value">
+      </div>
+
+      <div class="section">
+        <div class="section-label">Musical Scale</div>
+        <select id="scale-select" onchange="setScale(this.value)" style="margin-bottom:10px">
+          <option value="pentatonic">C Major Pentatonic</option>
+          <option value="lydian">F# Lydian</option>
+          <option value="dorian">D Dorian</option>
+          <option value="blues">A Blues</option>
+          <option value="whole">Whole Tone</option>
+        </select>
+        <div class="control-row">
+          <span class="control-label">Octave Range</span>
+          <span class="val-badge" id="oct-val">3–5</span>
+        </div>
+        <input type="range" id="octave-range" min="1" max="3" value="2" step="1" oninput="setOctaveRange(this.value)">
+        <div class="control-row">
+          <span class="control-label">Rhythmic Snap</span>
+          <label class="toggle"><input type="checkbox" id="snap-toggle" checked><span class="toggle-slider"></span></label>
+        </div>
+        <select id="snap-val" style="margin-top:6px">
+          <option value="8n">1/8 note</option>
+          <option value="16n">1/16 note</option>
+          <option value="4n">1/4 note</option>
+        </select>
+      </div>
+
+      <div class="section">
+        <div class="section-label">FX Chain</div>
+        <div class="control-row">
+          <span class="control-label">Reverb Size</span>
+          <span class="val-badge" id="rev-val">0.6</span>
+        </div>
+        <input type="range" id="reverb" min="0" max="1" step="0.05" value="0.6" oninput="setReverb(this.value)">
+        <div class="control-row">
+          <span class="control-label">Delay Time</span>
+          <span class="val-badge" id="del-val">3/16</span>
+        </div>
+        <input type="range" id="delay" min="0" max="1" step="0.05" value="0.5" oninput="setDelay(this.value)">
+        <div class="control-row">
+          <span class="control-label">Master Vol</span>
+          <span class="val-badge" id="vol-val">-6</span>
+        </div>
+        <input type="range" id="volume" min="-30" max="0" step="1" value="-6" oninput="setVolume(this.value)">
+      </div>
+
+      <div class="section" style="display:flex;flex-direction:column;gap:8px">
+        <button class="btn btn-primary" id="play-btn" onclick="togglePlay()">▶ &nbsp;Play + Activate</button>
+        <button class="btn btn-secondary" onclick="clearLine()">Clear Line</button>
+        <button class="btn btn-danger" onclick="resetAll()">Reset</button>
+      </div>
+
+      <div class="section">
+        <div class="section-label">Last Triggered</div>
+        <div id="last-note" style="font-family:var(--serif);font-weight:300;font-style:italic;font-size:30px;color:var(--accent);line-height:1">—</div>
+        <div id="last-info" style="font-family:var(--mono);font-size:9px;color:var(--muted);margin-top:6px;letter-spacing:0.06em">pos: — · vel: —</div>
+        <div style="margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:6px">
+          <div style="background:rgba(0,229,160,0.04);border:1px solid rgba(0,229,160,0.1);padding:9px">
+            <div style="font-family:var(--mono);font-size:8px;letter-spacing:0.16em;color:var(--muted);margin-bottom:4px">TRIGGERS</div>
+            <div id="trigger-count" style="font-family:var(--mono);font-size:16px;color:var(--text)">0</div>
+          </div>
+          <div style="background:rgba(184,98,47,0.05);border:1px solid rgba(184,98,47,0.12);padding:9px">
+            <div style="font-family:var(--mono);font-size:8px;letter-spacing:0.16em;color:var(--muted);margin-bottom:4px">FPS</div>
+            <div id="fps-counter" style="font-family:var(--mono);font-size:16px;color:var(--text)">—</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="visualizer"><canvas id="vis-canvas"></canvas></div>
+  <div id="status-bar">
+    <div class="status-item"><div class="status-dot yellow" id="audio-dot"></div><span id="audio-status">audio: standby</span></div>
+    <div class="status-item"><div class="status-dot red" id="detect-dot"></div><span id="detect-status">detection: off</span></div>
+    <div class="status-item" style="margin-left:auto"><span id="video-info">no video</span></div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+<script>
+let lineMode = 'horizontal';
+let linePos = 50;
+let sensitivity = 30;
+let isPlaying = false;
+let triggerCount = 0;
+let animId = null;
+let bgModel = null;  // adaptive background model (Float32Array)
+let cooldowns = {};
+let lastFrameTime = 0;
+let fpsArr = [];
+
+const SCALES = {
+  pentatonic: ['C3','E3','G3','A3','C4','E4','G4','A4','C5','E5','G5'],
+  lydian:     ['F3','G3','A3','B3','C#4','E4','F4','G4','A4','B4','C#5'],
+  dorian:     ['D3','F3','G3','A3','C4','D4','F4','G4','A4','C5','D5'],
+  blues:      ['A2','C3','D3','Eb3','E3','G3','A3','C4','D4','Eb4','E4','G4'],
+  whole:      ['C3','D3','E3','F#3','Ab3','Bb3','C4','D4','E4','F#4','Ab4','Bb4']
+};
+let currentScale = SCALES.pentatonic;
+let octaveShift = 0;
+
+let synth, chorus, reverb, delay, vol, analyser;
+
+async function initAudio() {
+  if (synth) return;
+  document.getElementById('audio-status').textContent = 'audio: loading…';
+  vol = new Tone.Volume(-8).toDestination();
+  // Lush reverb — long tail for ambience
+  reverb = new Tone.Reverb({ decay: 5.0, wet: 0.55 }).connect(vol);
+  // Gentle slapback-style delay for space
+  delay = new Tone.FeedbackDelay({ delayTime: '3/16', feedback: 0.28, wet: 0.3 }).connect(reverb);
+  // Subtle chorus to widen & warm the tone
+  chorus = new Tone.Chorus({ frequency: 2.5, delayTime: 2, depth: 0.4, wet: 0.35 }).connect(delay);
+  chorus.start();
+  // Sine wave: clean, warm, no harsh harmonics
+  // Long release so notes blend into each other naturally
+  synth = new Tone.PolySynth(Tone.Synth, {
+    oscillator: { type: 'sine' },
+    envelope: { attack: 0.08, decay: 0.5, sustain: 0.18, release: 3.0 }
+  }).connect(chorus);
+  analyser = new Tone.Analyser('waveform', 256);
+  vol.connect(analyser);
+  await reverb.generate();  // must await — decay:5.0 takes ~3s to generate
+  document.getElementById('audio-dot').style.background = '#00e5a0';
+  document.getElementById('audio-status').textContent = 'audio: ready';
+}
+
+function setScale(v) { currentScale = SCALES[v]; }
+function setOctaveRange(v) {
+  octaveShift = +v - 2;
+  document.getElementById('oct-val').textContent = (3+octaveShift)+'-'+(5+octaveShift);
+}
+function setReverb(v) {
+  document.getElementById('rev-val').textContent = (+v).toFixed(2);
+  if (reverb) reverb.wet.value = +v;
+}
+function setDelay(v) {
+  document.getElementById('del-val').textContent = (+v).toFixed(2);
+  if (delay) delay.wet.value = +v;
+}
+function setVolume(v) {
+  document.getElementById('vol-val').textContent = v;
+  if (vol) vol.volume.value = +v;
+}
+function setLineMode(m) {
+  lineMode = m;
+  document.getElementById('btn-horiz').classList.toggle('active', m==='horizontal');
+  document.getElementById('btn-vert').classList.toggle('active', m==='vertical');
+  overlay.classList.toggle('vert-mode', m==='vertical');
+  bgModel = null;
+  drawLine();
+}
+function updateLinePos(v) {
+  linePos = Math.max(5, Math.min(95, Math.round(+v)));
+  document.getElementById('line-pos-val').textContent = linePos+'%';
+  bgModel = null;
+}
+function clearLine() { bgModel = null; drawLine(); }
+
+const video = document.getElementById('myVideo');
+const overlay = document.getElementById('overlay-canvas');
+const ctx = overlay.getContext('2d', { willReadFrequently: true });
+
+// ── Drag-to-reposition trigger line ──────────────────────────
+let isDragging = false;
+
+function getLinePosFromEvent(e) {
+  const rect = overlay.getBoundingClientRect();
+  if (lineMode === 'horizontal') {
+    return ((e.clientY - rect.top) / rect.height) * 100;
+  } else {
+    return ((e.clientX - rect.left) / rect.width) * 100;
+  }
+}
+
+overlay.addEventListener('mousedown',  e => { isDragging = true; updateLinePos(getLinePosFromEvent(e)); drawLine(); });
+overlay.addEventListener('mousemove',  e => { if (!isDragging) return; updateLinePos(getLinePosFromEvent(e)); drawLine(); });
+overlay.addEventListener('mouseup',    () => { isDragging = false; });
+overlay.addEventListener('mouseleave', () => { isDragging = false; });
+overlay.addEventListener('touchstart', e => { isDragging = true; updateLinePos(getLinePosFromEvent(e.touches[0])); drawLine(); }, { passive: true });
+overlay.addEventListener('touchmove',  e => { if (!isDragging) return; e.preventDefault(); updateLinePos(getLinePosFromEvent(e.touches[0])); drawLine(); }, { passive: false });
+overlay.addEventListener('touchend',   () => { isDragging = false; });
+
+document.getElementById('file-input').addEventListener('change', function(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const url = URL.createObjectURL(file);
+  video.src = url;
+  document.getElementById('upload-zone').classList.add('hidden');
+  document.getElementById('video-container').classList.add('visible');
+  document.getElementById('video-info').textContent = file.name.substring(0,20);
+  video.onloadedmetadata = () => resizeOverlay();
+});
+
+function resizeOverlay() {
+  const rect = document.getElementById('canvas-area').getBoundingClientRect();
+  overlay.width = rect.width;
+  overlay.height = rect.height;
+  drawLine();
+}
+
+new ResizeObserver(resizeOverlay).observe(document.getElementById('canvas-area'));
+
+function drawLine() {
+  ctx.clearRect(0,0,overlay.width,overlay.height);
+  if (!video.src) return;
+  const w = overlay.width, h = overlay.height;
+  ctx.save();
+  ctx.strokeStyle = 'rgba(0,229,160,0.7)';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([6,4]);
+  ctx.shadowColor = '#00e5a0';
+  ctx.shadowBlur = 6;
+  ctx.beginPath();
+  if (lineMode === 'horizontal') {
+    const y = (linePos/100)*h;
+    ctx.moveTo(0,y); ctx.lineTo(w,y);
+  } else {
+    const x = (linePos/100)*w;
+    ctx.moveTo(x,0); ctx.lineTo(x,h);
+  }
+  ctx.stroke();
+  ctx.restore();
+  ctx.font = '9px Space Mono, monospace';
+  ctx.fillStyle = 'rgba(0,229,160,0.6)';
+  if (lineMode === 'horizontal') {
+    ctx.fillText('TRIGGER ' + linePos + '%', 8, (linePos/100)*overlay.height - 4);
+  } else {
+    ctx.fillText('TRIGGER ' + linePos + '%', (linePos/100)*overlay.width + 4, 14);
+  }
+}
+
+function getNoteFromPosition(pos, total) {
+  const idx = Math.floor((pos/total) * currentScale.length);
+  const note = currentScale[Math.min(idx, currentScale.length-1)];
+  if (octaveShift === 0) return note;
+  const octMatch = note.match(/([A-Gb#]+)(\d+)/);
+  if (!octMatch) return note;
+  return octMatch[1] + (parseInt(octMatch[2]) + octaveShift);
+}
+
+function triggerNote(pos, total, intensity) {
+  const key = Math.floor((pos/total)*20);
+  const now = Date.now();
+  if (cooldowns[key] && now - cooldowns[key] < 180) return;
+  cooldowns[key] = now;
+  const note = getNoteFromPosition(pos, total);
+  const vel = Math.min(1, 0.3 + (intensity/255)*0.7);
+  const snap = document.getElementById('snap-toggle').checked;
+  const snapVal = document.getElementById('snap-val').value;
+  if (snap && Tone.Transport.state === 'started') {
+    Tone.Transport.scheduleOnce(() => { synth.triggerAttackRelease(note,'8n',undefined,vel); }, '@'+snapVal);
+  } else {
+    synth.triggerAttackRelease(note,'8n',undefined,vel);
+  }
+  triggerCount++;
+  document.getElementById('trigger-count').textContent = triggerCount;
+  document.getElementById('last-note').textContent = note;
+  document.getElementById('last-info').textContent = `pos: ${Math.round((pos/total)*100)}% · vel: ${vel.toFixed(2)}`;
+  const flash = document.getElementById('note-flash');
+  flash.textContent = note;
+  flash.style.opacity = '1';
+  setTimeout(() => flash.style.opacity = '0', 250);
+  flashLine();
+}
+
+function flashLine() {
+  ctx.save();
+  ctx.strokeStyle = 'rgba(0,229,160,1)';
+  ctx.lineWidth = 2.5;
+  ctx.setLineDash([]);
+  ctx.shadowColor = '#00e5a0';
+  ctx.shadowBlur = 15;
+  const w = overlay.width, h = overlay.height;
+  ctx.beginPath();
+  if (lineMode === 'horizontal') {
+    const y = (linePos/100)*h; ctx.moveTo(0,y); ctx.lineTo(w,y);
+  } else {
+    const x = (linePos/100)*w; ctx.moveTo(x,0); ctx.lineTo(x,h);
+  }
+  ctx.stroke();
+  ctx.restore();
+  setTimeout(drawLine, 120);
+}
+
+const offscreen = document.createElement('canvas');
+const offCtx = offscreen.getContext('2d', { willReadFrequently: true });
+
+function processFrame() {
+  if (!isPlaying || video.paused || video.ended || !video.videoWidth) return;
+  const now = performance.now();
+  const dt = now - lastFrameTime;
+  fpsArr.push(1000/dt);
+  if (fpsArr.length > 20) fpsArr.shift();
+  lastFrameTime = now;
+  document.getElementById('fps-counter').textContent = Math.round(fpsArr.reduce((a,b)=>a+b,0)/fpsArr.length);
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw || !vh) return;
+
+  const SAMPLE = lineMode === 'horizontal' ? vw : vh;
+  const STEP = 4;
+  offscreen.width = vw; offscreen.height = 1;
+  if (lineMode === 'horizontal') {
+    const sy = Math.floor((linePos/100)*vh);
+    offCtx.drawImage(video, 0, sy, vw, 1, 0, 0, vw, 1);
+  } else {
+    offscreen.width = 1; offscreen.height = vh;
+    const sx = Math.floor((linePos/100)*vw);
+    offCtx.drawImage(video, sx, 0, 1, vh, 0, 0, 1, vh);
+  }
+  const data = offCtx.getImageData(0, 0, offscreen.width, offscreen.height).data;
+
+  // First frame: initialise background model
+  if (!bgModel || bgModel.length !== data.length) {
+    bgModel = new Float32Array(data.length);
+    for (let i = 0; i < data.length; i++) bgModel[i] = data[i];
+    return;
+  }
+
+  const total = lineMode === 'horizontal' ? vw : vh;
+  for (let i = 0; i < data.length; i += STEP*4) {
+    const pi = Math.floor(i/4);
+    const dr = Math.abs(data[i]   - bgModel[i]);
+    const dg = Math.abs(data[i+1] - bgModel[i+1]);
+    const db = Math.abs(data[i+2] - bgModel[i+2]);
+    const diff = (dr+dg+db)/3;
+    if (diff > sensitivity) {
+      // Moving object detected — trigger note
+      triggerNote(pi, total, diff);
+      // Still update background VERY slowly (α=0.01) so the model doesn't get
+      // permanently stuck if an object lingers; fast enough to recover but too
+      // slow to absorb a normally-moving object within its crossing window.
+      bgModel[i]   += 0.01 * (data[i]   - bgModel[i]);
+      bgModel[i+1] += 0.01 * (data[i+1] - bgModel[i+1]);
+      bgModel[i+2] += 0.01 * (data[i+2] - bgModel[i+2]);
+    } else {
+      // Background pixel — quickly re-learn so model recovers right after
+      // the object leaves (α=0.06, ~17 frames to fully re-converge)
+      bgModel[i]   += 0.06 * (data[i]   - bgModel[i]);
+      bgModel[i+1] += 0.06 * (data[i+1] - bgModel[i+1]);
+      bgModel[i+2] += 0.06 * (data[i+2] - bgModel[i+2]);
+    }
+  }
+}
+
+async function togglePlay() {
+  if (!video.src) return;
+  await Tone.start();
+  await initAudio();
+  if (!isPlaying) {
+    isPlaying = true;
+    video.play();
+    Tone.Transport.start();
+    document.getElementById('play-btn').textContent = '■  Stop';
+    document.getElementById('detect-dot').style.background = '#00e5a0';
+    document.getElementById('detect-status').textContent = 'detection: active';
+    lastFrameTime = performance.now();
+    loop();
+  } else {
+    isPlaying = false;
+    video.pause();
+    cancelAnimationFrame(animId);
+    document.getElementById('play-btn').textContent = '▶ \u00a0Play + Activate';
+    document.getElementById('detect-dot').style.background = 'var(--accent3)';
+    document.getElementById('detect-status').textContent = 'detection: off';
+  }
+}
+
+function loop() {
+  processFrame();
+  animId = requestAnimationFrame(loop);
+}
+
+function resetAll() {
+  isPlaying = false;
+  video.pause();
+  cancelAnimationFrame(animId);
+  video.src = '';
+  document.getElementById('upload-zone').classList.remove('hidden');
+  document.getElementById('video-container').classList.remove('visible');
+  bgModel = null; triggerCount = 0; fpsArr = [];
+  document.getElementById('trigger-count').textContent = '0';
+  document.getElementById('fps-counter').textContent = '—';
+  document.getElementById('last-note').textContent = '—';
+  document.getElementById('last-info').textContent = 'pos: — · vel: —';
+  document.getElementById('play-btn').textContent = '▶ \u00a0Play + Activate';
+  document.getElementById('detect-dot').style.background = 'var(--accent3)';
+  document.getElementById('detect-status').textContent = 'detection: off';
+  document.getElementById('video-info').textContent = 'no video';
+  document.getElementById('file-input').value = '';
+  ctx.clearRect(0,0,overlay.width,overlay.height);
+}
+
+const visCanvas = document.getElementById('vis-canvas');
+const visCtx = visCanvas.getContext('2d');
+function drawViz() {
+  requestAnimationFrame(drawViz);
+  visCanvas.width = visCanvas.offsetWidth;
+  visCanvas.height = visCanvas.offsetHeight;
+  const w = visCanvas.width, h = visCanvas.height;
+  visCtx.clearRect(0,0,w,h);
+  if (!analyser) {
+    visCtx.fillStyle = 'rgba(184,98,47,0.2)';
+    const step = w/32;
+    for (let i=0;i<32;i++) {
+      const y = h/2 + Math.sin(Date.now()/800+i*0.4)*8;
+      visCtx.fillRect(i*step, y, step-1, 1);
+    }
+    return;
+  }
+  const vals = analyser.getValue();
+  visCtx.beginPath();
+  visCtx.strokeStyle = 'rgba(0,229,160,0.8)';
+  visCtx.lineWidth = 1.5;
+  for (let i=0;i<vals.length;i++) {
+    const x = (i/vals.length)*w;
+    const y = h/2 + vals[i]*(h/2)*0.85;
+    i===0 ? visCtx.moveTo(x,y) : visCtx.lineTo(x,y);
+  }
+  visCtx.stroke();
+}
+drawViz();
+resizeOverlay();
+
+// ── Tutorial ──────────────────────────────────────────────────
+function closeTutorial() {
+  if (document.getElementById('tut-no-show').checked) {
+    localStorage.setItem('ats_tut_hidden', '1');
+  }
+  document.getElementById('tutorial-overlay').classList.add('hidden');
+}
+
+if (localStorage.getItem('ats_tut_hidden') === '1') {
+  document.getElementById('tutorial-overlay').classList.add('hidden');
+}
+</script>
