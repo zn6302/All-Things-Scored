@@ -541,7 +541,7 @@
         <input type="range" id="octave-range" min="1" max="3" value="2" step="1" oninput="setOctaveRange(this.value)">
         <div class="control-row">
           <span class="control-label">Rhythmic Snap</span>
-          <label class="toggle"><input type="checkbox" id="snap-toggle" checked><span class="toggle-slider"></span></label>
+          <label class="toggle"><input type="checkbox" id="snap-toggle"><span class="toggle-slider"></span></label>
         </div>
         <select id="snap-val" style="margin-top:6px">
           <option value="8n">1/8 note</option>
@@ -597,6 +597,7 @@
   <div id="status-bar">
     <div class="status-item"><div class="status-dot yellow" id="audio-dot"></div><span id="audio-status">audio: standby</span></div>
     <div class="status-item"><div class="status-dot red" id="detect-dot"></div><span id="detect-status">detection: off</span></div>
+    <div class="status-item"><span id="ctx-status" style="color:var(--muted)">ctx: —</span></div>
     <div class="status-item" style="margin-left:auto"><span id="video-info">no video</span></div>
   </div>
 </div>
@@ -610,6 +611,8 @@ let isPlaying = false;
 let triggerCount = 0;
 let animId = null;
 let bgModel = null;  // adaptive background model (Float32Array)
+let bgWarmupFrames = 0;  // skip triggering until bgModel has had time to stabilise
+const BG_WARMUP = 45;   // ~1.5 s at 30 fps — enough for model to converge before we fire notes
 let cooldowns = {};
 let lastFrameTime = 0;
 let fpsArr = [];
@@ -625,29 +628,41 @@ let currentScale = SCALES.pentatonic;
 let octaveShift = 0;
 
 let synth, chorus, reverb, delay, vol, analyser;
+let _audioInitPromise = null;  // shared promise — prevents double-init race
 
 async function initAudio() {
-  if (synth) return;
-  document.getElementById('audio-status').textContent = 'audio: loading…';
-  vol = new Tone.Volume(-8).toDestination();
-  // Lush reverb — long tail for ambience
-  reverb = new Tone.Reverb({ decay: 2.0, wet: 0.55 }).connect(vol);
-  // Gentle slapback-style delay for space
-  delay = new Tone.FeedbackDelay({ delayTime: '3/16', feedback: 0.28, wet: 0.3 }).connect(reverb);
-  // Subtle chorus to widen & warm the tone
-  chorus = new Tone.Chorus({ frequency: 2.5, delayTime: 2, depth: 0.4, wet: 0.35 }).connect(delay);
-  chorus.start();
-  // Sine wave: clean, warm, no harsh harmonics
-  // Long release so notes blend into each other naturally
-  synth = new Tone.PolySynth(Tone.Synth, {
-    oscillator: { type: 'sine' },
-    envelope: { attack: 0.08, decay: 0.5, sustain: 0.18, release: 3.0 }
-  }).connect(chorus);
-  analyser = new Tone.Analyser('waveform', 256);
-  vol.connect(analyser);
-  await reverb.generate();  // must await — generate IR before playback
-  document.getElementById('audio-dot').style.background = '#00e5a0';
-  document.getElementById('audio-status').textContent = 'audio: ready';
+  if (_audioInitPromise) return _audioInitPromise;  // already running or done — reuse same promise
+  _audioInitPromise = (async () => {
+    document.getElementById('audio-status').textContent = 'audio: loading…';
+    vol = new Tone.Volume(-8).toDestination();
+    // Freeverb: real-time Schroeder reverb — no offline rendering, starts immediately
+    reverb = new Tone.Freeverb({ roomSize: 0.85, dampening: 3500, wet: 0.5 }).connect(vol);
+    delay = new Tone.FeedbackDelay({ delayTime: '3/16', feedback: 0.28, wet: 0.3 }).connect(reverb);
+    chorus = new Tone.Chorus({ frequency: 2.5, delayTime: 2, depth: 0.4, wet: 0.35 }).connect(delay);
+    chorus.start();
+    analyser = new Tone.Analyser('waveform', 256);
+    vol.connect(analyser);
+    // No generate() needed — Freeverb works in real-time
+    synth = new Tone.PolySynth(Tone.Synth, {
+      oscillator: { type: 'sine' },
+      envelope: { attack: 0.08, decay: 0.5, sustain: 0.18, release: 3.0 }
+    }).connect(chorus);
+    // Keepalive: silent constant-source node prevents Chrome/Windows from
+    // auto-suspending the AudioContext when no audio has played recently
+    const rawCtx = Tone.context.rawContext;
+    const keepalive = rawCtx.createConstantSource();
+    const silentGain = rawCtx.createGain();
+    silentGain.gain.value = 0.00001;
+    keepalive.connect(silentGain);
+    silentGain.connect(rawCtx.destination);
+    keepalive.start();
+    // Pre-warm the audio pipeline so first real note plays without latency
+    synth.triggerAttackRelease('C4', '64n', undefined, 0.001);
+    document.getElementById('audio-dot').style.background = '#00e5a0';
+    document.getElementById('audio-status').textContent = 'audio: ready';
+    document.getElementById('ctx-status').textContent = 'ctx: running';
+  })();
+  return _audioInitPromise;
 }
 
 function setScale(v) { currentScale = SCALES[v]; }
@@ -657,7 +672,7 @@ function setOctaveRange(v) {
 }
 function setReverb(v) {
   document.getElementById('rev-val').textContent = (+v).toFixed(2);
-  if (reverb) reverb.wet.value = +v;
+  if (reverb) reverb.roomSize.value = +v;  // Freeverb uses roomSize, not wet
 }
 function setDelay(v) {
   document.getElementById('del-val').textContent = (+v).toFixed(2);
@@ -672,7 +687,7 @@ function setLineMode(m) {
   document.getElementById('btn-horiz').classList.toggle('active', m==='horizontal');
   document.getElementById('btn-vert').classList.toggle('active', m==='vertical');
   overlay.classList.toggle('vert-mode', m==='vertical');
-  bgModel = null;
+  bgModel = null; bgWarmupFrames = 0;
   drawLine();
 }
 function updateLinePos(v) {
@@ -680,7 +695,7 @@ function updateLinePos(v) {
   document.getElementById('line-pos-val').textContent = linePos+'%';
   bgModel = null;
 }
-function clearLine() { bgModel = null; drawLine(); }
+function clearLine() { bgModel = null; bgWarmupFrames = 0; drawLine(); }
 
 const video = document.getElementById('myVideo');
 const overlay = document.getElementById('overlay-canvas');
@@ -765,6 +780,14 @@ function getNoteFromPosition(pos, total) {
 }
 
 function triggerNote(pos, total, intensity) {
+  if (!synth) return;
+  // If AudioContext is suspended (Windows can auto-suspend it), resume immediately
+  const ctxState = Tone.context.state;
+  document.getElementById('ctx-status').textContent = 'ctx: ' + ctxState;
+  if (ctxState !== 'running') {
+    Tone.context.resume();
+    return;  // skip this note — will play next frame once context is running
+  }
   const key = Math.floor((pos/total)*20);
   const now = Date.now();
   if (cooldowns[key] && now - cooldowns[key] < 180) return;
@@ -839,8 +862,15 @@ function processFrame() {
   if (!bgModel || bgModel.length !== data.length) {
     bgModel = new Float32Array(data.length);
     for (let i = 0; i < data.length; i++) bgModel[i] = data[i];
+    bgWarmupFrames = 0;
     return;
   }
+
+  // During warm-up, update model at a fast rate (α=0.25) without triggering notes.
+  // This lets the model converge to the actual scene quickly regardless of
+  // what the very first frame looked like.
+  bgWarmupFrames++;
+  const inWarmup = bgWarmupFrames <= BG_WARMUP;
 
   const total = lineMode === 'horizontal' ? vw : vh;
   for (let i = 0; i < data.length; i += STEP*4) {
@@ -849,21 +879,19 @@ function processFrame() {
     const dg = Math.abs(data[i+1] - bgModel[i+1]);
     const db = Math.abs(data[i+2] - bgModel[i+2]);
     const diff = (dr+dg+db)/3;
-    if (diff > sensitivity) {
+    if (!inWarmup && diff > sensitivity) {
       // Moving object detected — trigger note
       triggerNote(pi, total, diff);
-      // Still update background VERY slowly (α=0.01) so the model doesn't get
-      // permanently stuck if an object lingers; fast enough to recover but too
-      // slow to absorb a normally-moving object within its crossing window.
+      // Update background very slowly so the model doesn't absorb the moving object
       bgModel[i]   += 0.01 * (data[i]   - bgModel[i]);
       bgModel[i+1] += 0.01 * (data[i+1] - bgModel[i+1]);
       bgModel[i+2] += 0.01 * (data[i+2] - bgModel[i+2]);
     } else {
-      // Background pixel — quickly re-learn so model recovers right after
-      // the object leaves (α=0.06, ~17 frames to fully re-converge)
-      bgModel[i]   += 0.06 * (data[i]   - bgModel[i]);
-      bgModel[i+1] += 0.06 * (data[i+1] - bgModel[i+1]);
-      bgModel[i+2] += 0.06 * (data[i+2] - bgModel[i+2]);
+      // Background pixel (or still warming up) — learn quickly
+      const alpha = inWarmup ? 0.25 : 0.06;
+      bgModel[i]   += alpha * (data[i]   - bgModel[i]);
+      bgModel[i+1] += alpha * (data[i+1] - bgModel[i+1]);
+      bgModel[i+2] += alpha * (data[i+2] - bgModel[i+2]);
     }
   }
 }
@@ -903,7 +931,7 @@ function resetAll() {
   video.src = '';
   document.getElementById('upload-zone').classList.remove('hidden');
   document.getElementById('video-container').classList.remove('visible');
-  bgModel = null; triggerCount = 0; fpsArr = [];
+  bgModel = null; bgWarmupFrames = 0; triggerCount = 0; fpsArr = [];
   document.getElementById('trigger-count').textContent = '0';
   document.getElementById('fps-counter').textContent = '—';
   document.getElementById('last-note').textContent = '—';
